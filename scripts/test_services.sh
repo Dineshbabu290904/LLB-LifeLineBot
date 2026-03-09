@@ -13,6 +13,7 @@ set -uo pipefail   # NOTE: no -e; counters use VAR=$((VAR+1)) to avoid false exi
 TIMEOUT=${TIMEOUT:-5}
 BASE_URL=${BASE_URL:-"http://localhost"}
 SKIP_INFRA=${SKIP_INFRA:-0}
+HEALTH_ONLY=${HEALTH_ONLY:-0}
 PASS=0
 FAIL=0
 SKIP=0
@@ -32,6 +33,7 @@ while [[ $# -gt 0 ]]; do
     --timeout)    TIMEOUT="$2";  shift 2 ;;
     --base-url)   BASE_URL="$2"; shift 2 ;;
     --skip-infra) SKIP_INFRA=1;  shift   ;;
+    --health-only) HEALTH_ONLY=1; shift   ;;
     *) echo "Unknown argument: $1"; exit 1 ;;
   esac
 done
@@ -79,16 +81,28 @@ except Exception:
   fi
 }
 
-post_check() {
+request_check() {
   local label=$1
-  local url=$2
-  local body=$3
+  local method=$2
+  local url=$3
+  local body=${4:-}
 
   local http_code
-  http_code=$(curl -s -o /tmp/medbot_post_resp.json -w "%{http_code}" \
-    --max-time "$TIMEOUT" \
-    -X POST -H "Content-Type: application/json" \
-    -d "$body" "$url" 2>/dev/null) || http_code="000"
+  local curl_args=(
+    -s -o /tmp/medbot_post_resp.json -w "%{http_code}"
+    --max-time "$TIMEOUT"
+    -X "$method"
+    "$url"
+  )
+
+  if [[ -n "$body" ]]; then
+    curl_args+=(
+      -H "Content-Type: application/json"
+      -d "$body"
+    )
+  fi
+
+  http_code=$(curl "${curl_args[@]}" 2>/dev/null) || http_code="000"
 
   if [[ "$http_code" =~ ^2 ]]; then
     printf "  ${GREEN}✔${NC}  %s\n" "$label"
@@ -98,7 +112,7 @@ post_check() {
     SKIP=$((SKIP + 1))
   else
     printf "  ${RED}✘${NC}  %s  [HTTP $http_code]\n" "$label"
-    FAILURES+=("POST $label – HTTP $http_code")
+    FAILURES+=("$method $label – HTTP $http_code")
     FAIL=$((FAIL + 1))
   fi
 }
@@ -116,6 +130,7 @@ echo -e "${BOLD}╚════════════════════�
 echo -e "  Base URL    : ${BASE_URL}"
 echo -e "  Timeout     : ${TIMEOUT}s"
 echo -e "  Skip infra  : ${SKIP_INFRA}"
+echo -e "  Health only : ${HEALTH_ONLY}"
 echo -e "  Started     : $(date '+%Y-%m-%d %H:%M:%S')"
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -224,55 +239,59 @@ check_health "model_registry_service"        8120
 check_health "model_versioning_service"      8121
 
 # ═══════════════════════════════════════════════════════════════════════════════
-section "SMOKE TESTS – Key Endpoints"
+if [[ "$HEALTH_ONLY" == "1" ]]; then
+  section "SMOKE TESTS – Key Endpoints"
+  echo "  (skipped – health-only mode)"
+else
+  section "SMOKE TESTS – Key Endpoints"
 
-post_check "auth_service  POST /api/v1/auth/register" \
-  "${BASE_URL}:8001/api/v1/auth/register" \
-  '{"username":"testuser","password":"TestPass123!","email":"test@medbot.dev"}'
+  request_check "auth_service  POST /api/v1/auth/register" "POST" \
+    "${BASE_URL}:8001/api/v1/auth/register" \
+    '{"username":"testuser","password":"TestPass123!","email":"test@medbot.dev"}'
 
-post_check "session_service POST /api/v1/sessions" \
-  "${BASE_URL}:8002/api/v1/sessions" \
-  '{"user_id":"test-user-001"}'
+  request_check "session_service POST /api/v1/sessions" "POST" \
+    "${BASE_URL}:8002/api/v1/sessions" \
+    '{"user_id":"test-user-001"}'
 
-post_check "triage_agent   POST /api/v1/triage" \
-  "${BASE_URL}:8015/api/v1/triage" \
-  '{"query":"I have a headache and fever","user_id":"test-user-001"}'
+  request_check "triage_agent   POST /api/v1/triage" "POST" \
+    "${BASE_URL}:8015/api/v1/triage" \
+    '{"query":"I have a headache and fever","user_id":"test-user-001"}'
 
-post_check "emergency_detection POST /api/v1/emergency/detect" \
-  "${BASE_URL}:8072/api/v1/emergency/detect" \
-  '{"text":"chest pain and difficulty breathing","user_id":"test-user-001"}'
+  request_check "emergency_detection POST /api/v1/emergency/detect" "POST" \
+    "${BASE_URL}:8072/api/v1/emergency/detect" \
+    '{"text":"chest pain and difficulty breathing","user_id":"test-user-001"}'
 
-post_check "symptom_extraction POST /api/v1/symptoms/extract" \
-  "${BASE_URL}:8076/api/v1/symptoms/extract" \
-  '{"text":"I have a headache fever and sore throat for 3 days"}'
+  request_check "symptom_extraction POST /api/v1/symptoms/extract" "POST" \
+    "${BASE_URL}:8076/api/v1/symptoms/extract" \
+    '{"text":"I have a headache fever and sore throat for 3 days"}'
 
-post_check "severity_classification POST /api/v1/classify/severity" \
-  "${BASE_URL}:8071/api/v1/classify/severity" \
-  '{"symptoms":["headache","fever"],"patient_age":30}'
+  request_check "severity_classification POST /api/v1/classify/severity" "POST" \
+    "${BASE_URL}:8071/api/v1/classify/severity" \
+    '{"symptoms":["headache","fever"],"patient_age":30}'
 
-post_check "risk_detection  POST /api/v1/risk/detect" \
-  "${BASE_URL}:8075/api/v1/risk/detect" \
-  '{"text":"patient is diabetic with hypertension","user_id":"test-user-001"}'
+  request_check "risk_detection  POST /api/v1/risk/detect" "POST" \
+    "${BASE_URL}:8075/api/v1/risk/detect" \
+    '{"text":"patient is diabetic with hypertension","user_id":"test-user-001"}'
 
-post_check "doctor_mapping  POST /api/v1/doctor/map" \
-  "${BASE_URL}:8080/api/v1/doctor/map" \
-  '{"symptoms":["chest pain","shortness of breath"]}'
+  request_check "doctor_mapping  POST /api/v1/doctor/map" "POST" \
+    "${BASE_URL}:8080/api/v1/doctor/map" \
+    '{"symptoms":["chest pain","shortness of breath"]}'
 
-post_check "knowledge_base  POST /api/v1/knowledge" \
-  "${BASE_URL}:8022/api/v1/knowledge" \
-  '{"title":"Headache","content":"Headache can be caused by stress or dehydration","category":"neurology"}'
+  request_check "knowledge_base  POST /api/v1/knowledge" "POST" \
+    "${BASE_URL}:8022/api/v1/knowledge" \
+    '{"title":"Headache","content":"Headache can be caused by stress or dehydration","category":"neurology"}'
 
-post_check "document_cleaning POST /api/v1/documents/clean" \
-  "${BASE_URL}:8062/api/v1/documents/clean" \
-  '{"text":"  Hello   World!!!   This   is   a   test.  "}'
+  request_check "document_cleaning POST /api/v1/documents/clean" "POST" \
+    "${BASE_URL}:8062/api/v1/documents/clean" \
+    '{"text":"  Hello   World!!!   This   is   a   test.  "}'
 
-post_check "who_guidelines  POST /api/v1/who/search" \
-  "${BASE_URL}:8078/api/v1/who/search" \
-  '{"query":"diabetes management"}'
+  request_check "who_guidelines  POST /api/v1/who/search" "POST" \
+    "${BASE_URL}:8078/api/v1/who/search" \
+    '{"query":"diabetes management"}'
 
-post_check "model_registry  GET  /api/v1/models" \
-  "${BASE_URL}:8120/api/v1/models" \
-  '{}'
+  request_check "model_registry  GET  /api/v1/models" "GET" \
+    "${BASE_URL}:8120/api/v1/models"
+fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
 section "SUMMARY"

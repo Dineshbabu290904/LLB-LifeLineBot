@@ -24,7 +24,7 @@ help:
 	@echo "  make logs s=<name>   Stream logs for a specific service"
 	@echo "  make logs-all        Stream logs for all services"
 	@echo "  make test            Wait for services, then run full test suite"
-	@echo "  make test-health     Run health checks only (no smoke tests)"
+	@echo "  make test-health     Run health checks only (skip smoke tests)"
 	@echo "  make test-smoke      Run full smoke test suite"
 	@echo "  make pull-models     Pull required Ollama models"
 	@echo "  make monitoring-up   Start Prometheus + Grafana + Nginx (monitoring stack)"
@@ -87,7 +87,7 @@ _wait:
 
 test-health:
 	@echo "→ Running health checks..."
-	@TIMEOUT=$(TIMEOUT) BASE_URL=$(BASE_URL) bash scripts/test_services.sh
+	@TIMEOUT=$(TIMEOUT) BASE_URL=$(BASE_URL) HEALTH_ONLY=1 bash scripts/test_services.sh
 
 test-smoke:
 	@echo "→ Running full smoke test suite..."

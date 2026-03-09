@@ -105,7 +105,7 @@ jobs:
           print('\n'.join(names))
           " 2>/dev/null || true)
 
-          EXPECTED_COUNT=59
+          EXPECTED_COUNT=$(docker compose config --services | grep -Ev '^(mongodb|postgresql|redis|ollama)$' | wc -l)
           ACTUAL_COUNT=$(docker compose images --quiet 2>/dev/null | wc -l || echo 0)
           echo "  Built images: ${ACTUAL_COUNT} / ${EXPECTED_COUNT}"
 
