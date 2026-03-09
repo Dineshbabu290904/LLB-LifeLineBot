@@ -156,7 +156,7 @@ jobs:
 
       - name: Start infrastructure services
         run: |
-          docker compose up -d mongodb postgresql redis
+          docker compose up -d mongodb postgresql redis ollama
           echo "Waiting for infrastructure to be ready..."
           timeout 60 bash -c 'until docker compose exec -T mongodb mongosh --eval "db.adminCommand(\"ping\")" > /dev/null 2>&1; do sleep 2; done'
           timeout 60 bash -c 'until docker compose exec -T postgresql pg_isready -U medbot_user > /dev/null 2>&1; do sleep 2; done'
