@@ -2,12 +2,17 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # MEDBOT – Full Platform Health & Smoke Test
 # Usage: ./scripts/test_services.sh [--timeout 5] [--base-url http://localhost]
+# Env vars:
+#   TIMEOUT=5          curl timeout in seconds
+#   BASE_URL=http://localhost
+#   SKIP_INFRA=1       skip nc-based infra port checks (use in CI / Docker env)
 # ─────────────────────────────────────────────────────────────────────────────
-set -euo pipefail
+set -uo pipefail   # NOTE: no -e; counters use VAR=$((VAR+1)) to avoid false exits
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
 TIMEOUT=${TIMEOUT:-5}
 BASE_URL=${BASE_URL:-"http://localhost"}
+SKIP_INFRA=${SKIP_INFRA:-0}
 PASS=0
 FAIL=0
 SKIP=0
@@ -24,13 +29,24 @@ NC='\033[0m'
 # ── Argument parsing ──────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --timeout) TIMEOUT="$2"; shift 2 ;;
-    --base-url) BASE_URL="$2"; shift 2 ;;
+    --timeout)    TIMEOUT="$2";  shift 2 ;;
+    --base-url)   BASE_URL="$2"; shift 2 ;;
+    --skip-infra) SKIP_INFRA=1;  shift   ;;
     *) echo "Unknown argument: $1"; exit 1 ;;
   esac
 done
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+port_open() {
+  local host=$1 port=$2
+  # Try nc first, fall back to bash /dev/tcp
+  if command -v nc >/dev/null 2>&1; then
+    nc -z -w "$TIMEOUT" "$host" "$port" >/dev/null 2>&1
+  else
+    (echo >/dev/tcp/"$host"/"$port") 2>/dev/null
+  fi
+}
+
 check_health() {
   local name=$1
   local port=$2
@@ -38,21 +54,28 @@ check_health() {
 
   local http_code
   http_code=$(curl -s -o /tmp/medbot_health_resp.json -w "%{http_code}" \
-    --max-time "$TIMEOUT" "$url" 2>/dev/null || echo "000")
+    --max-time "$TIMEOUT" "$url" 2>/dev/null) || http_code="000"
 
   if [[ "$http_code" == "200" ]]; then
     local status
-    status=$(python3 -c "import json,sys; d=json.load(open('/tmp/medbot_health_resp.json')); print(d.get('status','?'))" 2>/dev/null || echo "?")
+    status=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('/tmp/medbot_health_resp.json'))
+    print(d.get('status', '?'))
+except Exception:
+    print('?')
+" 2>/dev/null) || status="?"
     printf "  ${GREEN}✔${NC}  %-45s port %-5s  [%s]\n" "$name" "$port" "$status"
-    ((PASS++))
+    PASS=$((PASS + 1))
   elif [[ "$http_code" == "000" ]]; then
     printf "  ${YELLOW}–${NC}  %-45s port %-5s  [unreachable]\n" "$name" "$port"
     FAILURES+=("$name:$port – unreachable / not running")
-    ((FAIL++))
+    FAIL=$((FAIL + 1))
   else
     printf "  ${RED}✘${NC}  %-45s port %-5s  [HTTP $http_code]\n" "$name" "$port"
     FAILURES+=("$name:$port – HTTP $http_code")
-    ((FAIL++))
+    FAIL=$((FAIL + 1))
   fi
 }
 
@@ -65,18 +88,18 @@ post_check() {
   http_code=$(curl -s -o /tmp/medbot_post_resp.json -w "%{http_code}" \
     --max-time "$TIMEOUT" \
     -X POST -H "Content-Type: application/json" \
-    -d "$body" "$url" 2>/dev/null || echo "000")
+    -d "$body" "$url" 2>/dev/null) || http_code="000"
 
   if [[ "$http_code" =~ ^2 ]]; then
     printf "  ${GREEN}✔${NC}  %s\n" "$label"
-    ((PASS++))
+    PASS=$((PASS + 1))
   elif [[ "$http_code" == "000" ]]; then
     printf "  ${YELLOW}–${NC}  %s  [unreachable]\n" "$label"
-    ((SKIP++))
+    SKIP=$((SKIP + 1))
   else
     printf "  ${RED}✘${NC}  %s  [HTTP $http_code]\n" "$label"
     FAILURES+=("POST $label – HTTP $http_code")
-    ((FAIL++))
+    FAIL=$((FAIL + 1))
   fi
 }
 
@@ -90,25 +113,29 @@ echo ""
 echo -e "${BOLD}╔══════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BOLD}║          MEDBOT Platform Health & Smoke Test             ║${NC}"
 echo -e "${BOLD}╚══════════════════════════════════════════════════════════╝${NC}"
-echo -e "  Base URL : ${BASE_URL}"
-echo -e "  Timeout  : ${TIMEOUT}s"
-echo -e "  Started  : $(date '+%Y-%m-%d %H:%M:%S')"
+echo -e "  Base URL    : ${BASE_URL}"
+echo -e "  Timeout     : ${TIMEOUT}s"
+echo -e "  Skip infra  : ${SKIP_INFRA}"
+echo -e "  Started     : $(date '+%Y-%m-%d %H:%M:%S')"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 section "INFRASTRUCTURE"
-# Check infrastructure separately
-for svc in "MongoDB:27017" "PostgreSQL:5432" "Redis:6379" "Ollama:11434"; do
-  name="${svc%%:*}"
-  port="${svc##*:}"
-  if nc -z -w "$TIMEOUT" localhost "$port" 2>/dev/null; then
-    printf "  ${GREEN}✔${NC}  %-45s port %s  [up]\n" "$name" "$port"
-    ((PASS++))
-  else
-    printf "  ${RED}✘${NC}  %-45s port %s  [down]\n" "$name" "$port"
-    FAILURES+=("$name:$port – port not open")
-    ((FAIL++))
-  fi
-done
+if [[ "$SKIP_INFRA" == "1" ]]; then
+  echo "  (skipped – Docker Compose manages infrastructure health)"
+else
+  for svc in "MongoDB:27017" "PostgreSQL:5432" "Redis:6379" "Ollama:11434"; do
+    name="${svc%%:*}"
+    port="${svc##*:}"
+    if port_open "localhost" "$port"; then
+      printf "  ${GREEN}✔${NC}  %-45s port %s  [up]\n" "$name" "$port"
+      PASS=$((PASS + 1))
+    else
+      printf "  ${RED}✘${NC}  %-45s port %s  [down]\n" "$name" "$port"
+      FAILURES+=("$name:$port – port not open")
+      FAIL=$((FAIL + 1))
+    fi
+  done
+fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
 section "CORE / GATEWAY (8000–8005)"
@@ -199,62 +226,50 @@ check_health "model_versioning_service"      8121
 # ═══════════════════════════════════════════════════════════════════════════════
 section "SMOKE TESTS – Key Endpoints"
 
-# Auth service – register endpoint
 post_check "auth_service  POST /api/v1/auth/register" \
   "${BASE_URL}:8001/api/v1/auth/register" \
   '{"username":"testuser","password":"TestPass123!","email":"test@medbot.dev"}'
 
-# Session service – create session
 post_check "session_service POST /api/v1/sessions" \
   "${BASE_URL}:8002/api/v1/sessions" \
   '{"user_id":"test-user-001"}'
 
-# Triage agent – triage a query
 post_check "triage_agent   POST /api/v1/triage" \
   "${BASE_URL}:8015/api/v1/triage" \
   '{"query":"I have a headache and fever","user_id":"test-user-001"}'
 
-# Emergency detection
 post_check "emergency_detection POST /api/v1/emergency/detect" \
   "${BASE_URL}:8072/api/v1/emergency/detect" \
   '{"text":"chest pain and difficulty breathing","user_id":"test-user-001"}'
 
-# Symptom extraction
 post_check "symptom_extraction POST /api/v1/symptoms/extract" \
   "${BASE_URL}:8076/api/v1/symptoms/extract" \
   '{"text":"I have a headache fever and sore throat for 3 days"}'
 
-# Severity classification
 post_check "severity_classification POST /api/v1/classify/severity" \
   "${BASE_URL}:8071/api/v1/classify/severity" \
   '{"symptoms":["headache","fever"],"patient_age":30}'
 
-# Risk detection
 post_check "risk_detection  POST /api/v1/risk/detect" \
   "${BASE_URL}:8075/api/v1/risk/detect" \
   '{"text":"patient is diabetic with hypertension","user_id":"test-user-001"}'
 
-# Doctor mapping
 post_check "doctor_mapping  POST /api/v1/doctor/map" \
   "${BASE_URL}:8080/api/v1/doctor/map" \
   '{"symptoms":["chest pain","shortness of breath"]}'
 
-# Knowledge base – store entry
 post_check "knowledge_base  POST /api/v1/knowledge" \
   "${BASE_URL}:8022/api/v1/knowledge" \
   '{"title":"Headache","content":"Headache can be caused by stress or dehydration","category":"neurology"}'
 
-# Document cleaning
 post_check "document_cleaning POST /api/v1/documents/clean" \
   "${BASE_URL}:8062/api/v1/documents/clean" \
   '{"text":"  Hello   World!!!   This   is   a   test.  "}'
 
-# WHO guidelines search
 post_check "who_guidelines  POST /api/v1/who/search" \
   "${BASE_URL}:8078/api/v1/who/search" \
   '{"query":"diabetes management"}'
 
-# Model registry list
 post_check "model_registry  GET  /api/v1/models" \
   "${BASE_URL}:8120/api/v1/models" \
   '{}'
@@ -283,7 +298,7 @@ if [[ $FAIL -eq 0 ]]; then
   exit 0
 else
   PASS_RATE=$(( PASS * 100 / (PASS + FAIL) ))
-  echo -e "  ${YELLOW}${BOLD}Platform health: ${PASS_RATE}% (${PASS}/${PASS_RATE} services OK)${NC}"
+  echo -e "  ${YELLOW}${BOLD}Platform health: ${PASS_RATE}% (${PASS}/$((PASS + FAIL)) checks OK)${NC}"
   echo ""
   exit 1
 fi

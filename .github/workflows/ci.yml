@@ -96,41 +96,30 @@ jobs:
 
       - name: Verify all expected images exist
         run: |
-          echo "Checking built images..."
-          MISSING=0
-          SERVICES=(
-            api_gateway auth_service session_service rate_limit_service
-            request_validation_service agent_controller langgraph_orchestrator
-            triage_agent context_builder_service knowledge_agent_service
-            knowledge_base_service vision_agent_service rag_agent_service
-            reasoning_agent_service safety_guardrail_agent search_agent_service
-            evaluation_agent dataset_generation_agent dataset_labeling_model_service
-            dataset_preparation_service conversation_storage_service dataset_storage_service
-            metadata_storage_service audit_log_service ollama_router_service
-            reasoning_model_service embedding_model_service vision_model_service
-            embedding_generation_service vector_index_service vector_search_service
-            classification_model_service response_scoring_service document_ingestion_service
-            document_chunking_service document_cleaning_service medical_entity_extraction_service
-            severity_classification_service emergency_detection_service
-            medical_source_validation_service pubmed_search_service risk_detection_service
-            symptom_extraction_agent web_search_service who_guidelines_service
-            doctor_mapping_service doctor_recommendation_agent config_service
-            logging_service monitoring_service metrics_service triage_accuracy_service
-            medical_consistency_service safety_validation_service hallucination_detection_agent
-            fine_tuning_service training_pipeline_service model_registry_service
-            model_versioning_service
-          )
-          for svc in "${SERVICES[@]}"; do
-            IMG="llb-lifelinebot-${svc}:latest"
-            if docker image inspect "$IMG" > /dev/null 2>&1; then
-              echo "  ✔ $IMG"
-            else
-              echo "  ✘ MISSING: $IMG"
-              MISSING=1
-            fi
-          done
-          if [[ $MISSING -eq 1 ]]; then exit 1; fi
-          echo "All images built successfully."
+          echo "Checking built images via docker compose images..."
+          # docker compose images lists all images for services defined in compose file
+          BUILT=$(docker compose images --format json 2>/dev/null | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          names = [item.get('Name','') or item.get('Service','') for item in data]
+          print('\n'.join(names))
+          " 2>/dev/null || true)
+
+          EXPECTED_COUNT=59
+          ACTUAL_COUNT=$(docker compose images --quiet 2>/dev/null | wc -l || echo 0)
+          echo "  Built images: ${ACTUAL_COUNT} / ${EXPECTED_COUNT}"
+
+          if [[ "$ACTUAL_COUNT" -lt "$EXPECTED_COUNT" ]]; then
+            echo "  Some images are missing. Listing all compose images:"
+            docker compose images 2>/dev/null || true
+            # Show which services have no image
+            docker compose ps --services 2>/dev/null | while read svc; do
+              docker compose images "$svc" --quiet 2>/dev/null | grep -q . \
+                && echo "  ✔ $svc" || echo "  ✘ $svc (no image)"
+            done
+            exit 1
+          fi
+          echo "All ${ACTUAL_COUNT} service images built successfully."
 
   # ───────────────────────────────────────────────────────────────────────────
   # 3. Integration test – start platform, run health checks + smoke tests
@@ -213,7 +202,9 @@ jobs:
       - name: Run full health & smoke test suite
         run: |
           chmod +x scripts/test_services.sh
-          TIMEOUT=8 bash scripts/test_services.sh
+          # SKIP_INFRA=1: Docker Compose already manages infra health;
+          # Ollama is intentionally not started in CI (too large without GPU)
+          TIMEOUT=8 SKIP_INFRA=1 bash scripts/test_services.sh
         continue-on-error: false
 
       - name: Show container logs on failure

@@ -1,5 +1,3 @@
-version: '3.8'
-
 # ─────────────────────────────────────────────────────────────────────────────
 # MEDBOT – Full-platform Docker Compose
 # 59 microservices + MongoDB + PostgreSQL + Redis + Ollama
