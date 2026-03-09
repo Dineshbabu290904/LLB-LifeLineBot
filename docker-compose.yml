@@ -1,0 +1,1111 @@
+version: '3.8'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MEDBOT – Full-platform Docker Compose
+# 59 microservices + MongoDB + PostgreSQL + Redis + Ollama
+# ─────────────────────────────────────────────────────────────────────────────
+
+networks:
+  medbot-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+  postgresql_data:
+  redis_data:
+  ollama_data:
+  faiss_data:
+
+# ─── Shared environment anchor ───────────────────────────────────────────────
+x-common-env: &common-env
+  MONGO_URL: mongodb://mongodb:27017
+  POSTGRES_URL: postgresql://medbot_user:medbot_pass@postgresql:5432/medbot
+  REDIS_URL: redis://redis:6379
+  OLLAMA_BASE_URL: http://ollama:11434
+  ENVIRONMENT: development
+  LOG_LEVEL: INFO
+  JWT_SECRET_KEY: medbot-secret-key-change-in-production
+
+x-infra-depends: &infra-depends
+  depends_on:
+    mongodb:
+      condition: service_healthy
+    postgresql:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # INFRASTRUCTURE
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  mongodb:
+    image: mongo:7
+    <<: *restart
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  postgresql:
+    image: postgres:16-alpine
+    <<: *restart
+    environment:
+      POSTGRES_USER: medbot_user
+      POSTGRES_PASSWORD: medbot_pass
+      POSTGRES_DB: medbot
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgresql_data:/var/lib/postgresql/data
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medbot_user -d medbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    <<: *restart
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  ollama:
+    image: ollama/ollama:latest
+    <<: *restart
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # CORE / GATEWAY
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  api_gateway:
+    build: ./services/api_gateway
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  auth_service:
+    build: ./services/auth_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8001:8001"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  session_service:
+    build: ./services/session_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8002:8002"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8002/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  rate_limit_service:
+    build: ./services/rate_limit_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8003:8003"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8003/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  request_validation_service:
+    build: ./services/request_validation_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8004:8004"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8004/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  agent_controller:
+    build: ./services/agent_controller
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8005:8005"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8005/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # ORCHESTRATION
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  langgraph_orchestrator:
+    build: ./services/langgraph_orchestrator
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8010:8010"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8010/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  triage_agent:
+    build: ./services/triage_agent
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8015:8015"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8015/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # AGENT SERVICES
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  context_builder_service:
+    build: ./services/context_builder_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8020:8020"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8020/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  knowledge_agent_service:
+    build: ./services/knowledge_agent_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8021:8021"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8021/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  knowledge_base_service:
+    build: ./services/knowledge_base_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8022:8022"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8022/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  vision_agent_service:
+    build: ./services/vision_agent_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8023:8023"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8023/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  rag_agent_service:
+    build: ./services/rag_agent_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8025:8025"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8025/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  reasoning_agent_service:
+    build: ./services/reasoning_agent_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8026:8026"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8026/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  safety_guardrail_agent:
+    build: ./services/safety_guardrail_agent
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8027:8027"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8027/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  search_agent_service:
+    build: ./services/search_agent_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8028:8028"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8028/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  evaluation_agent:
+    build: ./services/evaluation_agent
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8029:8029"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8029/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # DATASET SERVICES
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  dataset_generation_agent:
+    build: ./services/dataset_generation_agent
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8030:8030"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8030/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  dataset_labeling_model_service:
+    build: ./services/dataset_labeling_model_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8031:8031"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8031/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  dataset_preparation_service:
+    build: ./services/dataset_preparation_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8032:8032"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8032/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # STORAGE SERVICES
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  conversation_storage_service:
+    build: ./services/conversation_storage_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8040:8040"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8040/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  dataset_storage_service:
+    build: ./services/dataset_storage_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8041:8041"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8041/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  metadata_storage_service:
+    build: ./services/metadata_storage_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8042:8042"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8042/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  audit_log_service:
+    build: ./services/audit_log_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8043:8043"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8043/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # MODEL SERVICES
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  ollama_router_service:
+    build: ./services/ollama_router_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8050:8050"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8050/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  reasoning_model_service:
+    build: ./services/reasoning_model_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8051:8051"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8051/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  embedding_model_service:
+    build: ./services/embedding_model_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8052:8052"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8052/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  vision_model_service:
+    build: ./services/vision_model_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8053:8053"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8053/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  embedding_generation_service:
+    build: ./services/embedding_generation_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8054:8054"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8054/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  vector_index_service:
+    build: ./services/vector_index_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8055:8055"
+    volumes:
+      - faiss_data:/data/faiss_index
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8055/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  vector_search_service:
+    build: ./services/vector_search_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8056:8056"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8056/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  classification_model_service:
+    build: ./services/classification_model_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8057:8057"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8057/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  response_scoring_service:
+    build: ./services/response_scoring_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8058:8058"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8058/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # DOCUMENT PROCESSING
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  document_ingestion_service:
+    build: ./services/document_ingestion_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8060:8060"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8060/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  document_chunking_service:
+    build: ./services/document_chunking_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8061:8061"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8061/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  document_cleaning_service:
+    build: ./services/document_cleaning_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8062:8062"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8062/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # MEDICAL ANALYSIS
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  medical_entity_extraction_service:
+    build: ./services/medical_entity_extraction_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8070:8070"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8070/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  severity_classification_service:
+    build: ./services/severity_classification_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8071:8071"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8071/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  emergency_detection_service:
+    build: ./services/emergency_detection_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8072:8072"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8072/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  medical_source_validation_service:
+    build: ./services/medical_source_validation_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8073:8073"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8073/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  pubmed_search_service:
+    build: ./services/pubmed_search_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8074:8074"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8074/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  risk_detection_service:
+    build: ./services/risk_detection_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8075:8075"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8075/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  symptom_extraction_agent:
+    build: ./services/symptom_extraction_agent
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8076:8076"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8076/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  web_search_service:
+    build: ./services/web_search_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8077:8077"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8077/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  who_guidelines_service:
+    build: ./services/who_guidelines_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8078:8078"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8078/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # DOCTOR SERVICES
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  doctor_mapping_service:
+    build: ./services/doctor_mapping_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8080:8080"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  doctor_recommendation_agent:
+    build: ./services/doctor_recommendation_agent
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8081:8081"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # CONFIG & OBSERVABILITY
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  config_service:
+    build: ./services/config_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8090:8090"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8090/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  logging_service:
+    build: ./services/logging_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8091:8091"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8091/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  monitoring_service:
+    build: ./services/monitoring_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8092:8092"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8092/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  metrics_service:
+    build: ./services/metrics_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8093:8093"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8093/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # QUALITY & VALIDATION
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  triage_accuracy_service:
+    build: ./services/triage_accuracy_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8101:8101"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8101/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  medical_consistency_service:
+    build: ./services/medical_consistency_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8102:8102"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8102/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  safety_validation_service:
+    build: ./services/safety_validation_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8103:8103"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8103/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  hallucination_detection_agent:
+    build: ./services/hallucination_detection_agent
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8104:8104"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8104/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # TRAINING PIPELINE
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  fine_tuning_service:
+    build: ./services/fine_tuning_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8110:8110"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8110/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  training_pipeline_service:
+    build: ./services/training_pipeline_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8111:8111"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8111/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # MODEL MANAGEMENT
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  model_registry_service:
+    build: ./services/model_registry_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8120:8120"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8120/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  model_versioning_service:
+    build: ./services/model_versioning_service
+    <<: [*restart, *infra-depends]
+    ports:
+      - "8121:8121"
+    environment:
+      <<: *common-env
+    networks:
+      - medbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8121/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
