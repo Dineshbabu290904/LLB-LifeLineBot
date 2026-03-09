@@ -1,0 +1,281 @@
+{
+  "__inputs": [],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "9.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" }
+  ],
+  "annotations": { "list": [] },
+  "description": "MEDBOT Platform – Service Health Overview",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "title": "Platform Overview",
+      "type": "row"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "id": 1,
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background"
+      },
+      "title": "Services Up",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "count(up == 1)",
+          "legendFormat": "Services Up"
+        }
+      ]
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "id": 2,
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background"
+      },
+      "title": "Services Down",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "count(up == 0) or vector(0)",
+          "legendFormat": "Services Down"
+        }
+      ]
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "id": 3,
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value"
+      },
+      "title": "Total Request Rate",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total[5m])) or vector(0)",
+          "legendFormat": "Req/s"
+        }
+      ]
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 0.5 },
+            { "color": "red", "value": 2 }
+          ]}
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "id": 4,
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background"
+      },
+      "title": "Avg Response Time",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "avg(rate(http_request_duration_seconds_sum[5m]) / rate(http_request_duration_seconds_count[5m])) or vector(0)",
+          "legendFormat": "Avg Latency"
+        }
+      ]
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit",
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 0.01 },
+            { "color": "red", "value": 0.05 }
+          ]}
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "id": 5,
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background"
+      },
+      "title": "Error Rate",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) / sum(rate(http_requests_total[5m])) or vector(0)",
+          "legendFormat": "Error Rate"
+        }
+      ]
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "id": 101,
+      "title": "Service Health Status",
+      "type": "row"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": null },
+            { "color": "green", "value": 1 }
+          ]},
+          "mappings": [
+            { "options": { "0": { "text": "DOWN" }, "1": { "text": "UP" } }, "type": "value" }
+          ],
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 6 },
+      "id": 10,
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "horizontal",
+        "textMode": "name",
+        "colorMode": "background",
+        "displayMode": "list"
+      },
+      "title": "All Services – Up/Down",
+      "type": "stat",
+      "targets": [
+        { "expr": "up{job=\"api_gateway\"}", "legendFormat": "api_gateway" },
+        { "expr": "up{job=\"auth_service\"}", "legendFormat": "auth_service" },
+        { "expr": "up{job=\"session_service\"}", "legendFormat": "session_service" },
+        { "expr": "up{job=\"rate_limit_service\"}", "legendFormat": "rate_limit_service" },
+        { "expr": "up{job=\"agent_controller\"}", "legendFormat": "agent_controller" },
+        { "expr": "up{job=\"langgraph_orchestrator\"}", "legendFormat": "langgraph_orchestrator" },
+        { "expr": "up{job=\"triage_agent\"}", "legendFormat": "triage_agent" },
+        { "expr": "up{job=\"rag_agent_service\"}", "legendFormat": "rag_agent_service" },
+        { "expr": "up{job=\"reasoning_agent_service\"}", "legendFormat": "reasoning_agent_service" },
+        { "expr": "up{job=\"safety_guardrail_agent\"}", "legendFormat": "safety_guardrail_agent" },
+        { "expr": "up{job=\"emergency_detection_service\"}", "legendFormat": "emergency_detection_service" },
+        { "expr": "up{job=\"symptom_extraction_agent\"}", "legendFormat": "symptom_extraction_agent" },
+        { "expr": "up{job=\"vector_search_service\"}", "legendFormat": "vector_search_service" },
+        { "expr": "up{job=\"embedding_generation_service\"}", "legendFormat": "embedding_generation_service" },
+        { "expr": "up{job=\"ollama_router_service\"}", "legendFormat": "ollama_router_service" },
+        { "expr": "up{job=\"model_registry_service\"}", "legendFormat": "model_registry_service" }
+      ]
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 16 },
+      "id": 102,
+      "title": "Request Rate by Service Group",
+      "type": "row"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "lineWidth": 2 } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "id": 20,
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list" } },
+      "title": "Request Rate – Core Services",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rate(http_requests_total{job=\"api_gateway\"}[2m])", "legendFormat": "api_gateway" },
+        { "expr": "rate(http_requests_total{job=\"auth_service\"}[2m])", "legendFormat": "auth_service" },
+        { "expr": "rate(http_requests_total{job=\"triage_agent\"}[2m])", "legendFormat": "triage_agent" },
+        { "expr": "rate(http_requests_total{job=\"langgraph_orchestrator\"}[2m])", "legendFormat": "langgraph_orchestrator" }
+      ]
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "lineWidth": 2 } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "id": 21,
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list" } },
+      "title": "Response Latency – Medical Services (p95)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job=\"medical_services\"}[5m]))", "legendFormat": "{{instance}} p95" },
+        { "expr": "histogram_quantile(0.50, rate(http_request_duration_seconds_bucket{job=\"medical_services\"}[5m]))", "legendFormat": "{{instance}} p50" }
+      ]
+    }
+
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["medbot", "microservices", "health"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "MEDBOT Platform Overview",
+  "uid": "medbot-overview",
+  "version": 1
+}

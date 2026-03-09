@@ -2,7 +2,8 @@
 # MEDBOT Platform – Makefile
 # ─────────────────────────────────────────────────────────────────────────────
 .PHONY: help build up down restart logs test test-health test-smoke \
-        status pull-ollama-models clean reset infra-up infra-down
+        status pull-ollama-models clean reset infra-up infra-down \
+        monitoring-up monitoring-down
 
 COMPOSE     := docker compose
 TIMEOUT     := 5
@@ -26,8 +27,14 @@ help:
 	@echo "  make test-health     Run health checks only (no smoke tests)"
 	@echo "  make test-smoke      Run full smoke test suite"
 	@echo "  make pull-models     Pull required Ollama models"
+	@echo "  make monitoring-up   Start Prometheus + Grafana + Nginx (monitoring stack)"
+	@echo "  make monitoring-down Stop the monitoring stack"
 	@echo "  make clean           Remove stopped containers and dangling images"
 	@echo "  make reset           Stop, remove volumes, and rebuild everything"
+	@echo ""
+	@echo "  Grafana  : http://localhost:3000  (admin / medbot-admin)"
+	@echo "  Prometheus: http://localhost:9090"
+	@echo "  API      : http://localhost/api/  (via Nginx)"
 	@echo ""
 
 # ── Build ─────────────────────────────────────────────────────────────────────
@@ -107,6 +114,17 @@ reset:
 	$(COMPOSE) build --parallel
 	$(COMPOSE) up -d
 	@echo "→ Reset complete. Run 'make test' once services are ready."
+
+# ── Monitoring stack ──────────────────────────────────────────────────────────
+monitoring-up:
+	@echo "→ Starting monitoring stack (Prometheus + Grafana + Nginx)..."
+	docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d prometheus grafana nginx
+	@echo "  Grafana  : http://localhost:3000  (admin / medbot-admin)"
+	@echo "  Prometheus: http://localhost:9090"
+
+monitoring-down:
+	@echo "→ Stopping monitoring stack..."
+	docker compose -f docker-compose.yml -f docker-compose.monitoring.yml stop prometheus grafana nginx
 
 # ── Individual service shortcuts ──────────────────────────────────────────────
 .PHONY: gateway auth session triage rag

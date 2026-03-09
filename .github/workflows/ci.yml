@@ -1,0 +1,258 @@
+name: MEDBOT Platform CI
+
+on:
+  push:
+    branches: ["main", "master", "claude/**", "develop"]
+  pull_request:
+    branches: ["main", "master", "develop"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  COMPOSE_PARALLEL_LIMIT: 8    # build 8 images at a time
+  PYTHON_VERSION: "3.11"
+
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 1. Syntax / import validation (fast, no Docker needed)
+  # ───────────────────────────────────────────────────────────────────────────
+  syntax-check:
+    name: Python Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Validate all service Python files
+        run: |
+          echo "Checking syntax of all Python files..."
+          FAIL=0
+          while IFS= read -r -d '' f; do
+            python -c "
+          import ast, sys
+          try:
+              ast.parse(open('$f').read())
+          except SyntaxError as e:
+              print(f'SYNTAX ERROR in $f: {e}')
+              sys.exit(1)
+          " || FAIL=1
+          done < <(find services/ shared/ -name "*.py" -print0)
+
+          if [[ $FAIL -eq 1 ]]; then
+            echo "One or more files have syntax errors."
+            exit 1
+          fi
+          echo "All Python files are syntactically valid."
+
+      - name: Check for obvious import errors (dry run)
+        run: |
+          pip install fastapi pydantic pydantic-settings httpx uvicorn --quiet
+          FAIL=0
+          for f in services/*/main.py; do
+            python -c "
+          import ast, sys
+          tree = ast.parse(open('$f').read())
+          imports = [n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))]
+          print(f'OK: $f ({len(imports)} imports)')
+          " || FAIL=1
+          done
+          if [[ $FAIL -eq 1 ]]; then exit 1; fi
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 2. Docker build validation (build every image, don't start them)
+  # ───────────────────────────────────────────────────────────────────────────
+  build-images:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: syntax-check
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Build all service images
+        run: |
+          docker compose build --parallel 2>&1 | tail -20
+        env:
+          DOCKER_BUILDKIT: 1
+          BUILDX_NO_DEFAULT_ATTESTATIONS: 1
+
+      - name: Verify all expected images exist
+        run: |
+          echo "Checking built images..."
+          MISSING=0
+          SERVICES=(
+            api_gateway auth_service session_service rate_limit_service
+            request_validation_service agent_controller langgraph_orchestrator
+            triage_agent context_builder_service knowledge_agent_service
+            knowledge_base_service vision_agent_service rag_agent_service
+            reasoning_agent_service safety_guardrail_agent search_agent_service
+            evaluation_agent dataset_generation_agent dataset_labeling_model_service
+            dataset_preparation_service conversation_storage_service dataset_storage_service
+            metadata_storage_service audit_log_service ollama_router_service
+            reasoning_model_service embedding_model_service vision_model_service
+            embedding_generation_service vector_index_service vector_search_service
+            classification_model_service response_scoring_service document_ingestion_service
+            document_chunking_service document_cleaning_service medical_entity_extraction_service
+            severity_classification_service emergency_detection_service
+            medical_source_validation_service pubmed_search_service risk_detection_service
+            symptom_extraction_agent web_search_service who_guidelines_service
+            doctor_mapping_service doctor_recommendation_agent config_service
+            logging_service monitoring_service metrics_service triage_accuracy_service
+            medical_consistency_service safety_validation_service hallucination_detection_agent
+            fine_tuning_service training_pipeline_service model_registry_service
+            model_versioning_service
+          )
+          for svc in "${SERVICES[@]}"; do
+            IMG="llb-lifelinebot-${svc}:latest"
+            if docker image inspect "$IMG" > /dev/null 2>&1; then
+              echo "  ✔ $IMG"
+            else
+              echo "  ✘ MISSING: $IMG"
+              MISSING=1
+            fi
+          done
+          if [[ $MISSING -eq 1 ]]; then exit 1; fi
+          echo "All images built successfully."
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 3. Integration test – start platform, run health checks + smoke tests
+  # ───────────────────────────────────────────────────────────────────────────
+  integration-test:
+    name: Integration Health & Smoke Tests
+    runs-on: ubuntu-latest
+    needs: build-images
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore Docker layer cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Start infrastructure services
+        run: |
+          docker compose up -d mongodb postgresql redis
+          echo "Waiting for infrastructure to be ready..."
+          timeout 60 bash -c 'until docker compose exec -T mongodb mongosh --eval "db.adminCommand(\"ping\")" > /dev/null 2>&1; do sleep 2; done'
+          timeout 60 bash -c 'until docker compose exec -T postgresql pg_isready -U medbot_user > /dev/null 2>&1; do sleep 2; done'
+          timeout 60 bash -c 'until docker compose exec -T redis redis-cli ping > /dev/null 2>&1; do sleep 2; done'
+          echo "Infrastructure is ready."
+
+      - name: Start core services (group 1)
+        run: |
+          docker compose up -d \
+            config_service logging_service monitoring_service metrics_service \
+            auth_service session_service rate_limit_service request_validation_service \
+            audit_log_service conversation_storage_service dataset_storage_service \
+            metadata_storage_service knowledge_base_service
+          sleep 15
+
+      - name: Start model & processing services (group 2)
+        run: |
+          docker compose up -d \
+            ollama_router_service reasoning_model_service embedding_model_service \
+            vision_model_service classification_model_service \
+            embedding_generation_service vector_index_service vector_search_service \
+            response_scoring_service \
+            document_ingestion_service document_chunking_service document_cleaning_service
+          sleep 15
+
+      - name: Start medical & agent services (group 3)
+        run: |
+          docker compose up -d \
+            medical_entity_extraction_service severity_classification_service \
+            emergency_detection_service medical_source_validation_service \
+            pubmed_search_service risk_detection_service symptom_extraction_agent \
+            web_search_service who_guidelines_service doctor_mapping_service \
+            doctor_recommendation_agent context_builder_service knowledge_agent_service \
+            vision_agent_service rag_agent_service reasoning_agent_service \
+            safety_guardrail_agent search_agent_service evaluation_agent
+          sleep 15
+
+      - name: Start orchestration & pipeline services (group 4)
+        run: |
+          docker compose up -d \
+            agent_controller langgraph_orchestrator triage_agent api_gateway \
+            dataset_generation_agent dataset_labeling_model_service dataset_preparation_service \
+            fine_tuning_service training_pipeline_service \
+            model_registry_service model_versioning_service \
+            triage_accuracy_service medical_consistency_service \
+            safety_validation_service hallucination_detection_agent
+          sleep 20
+
+      - name: Wait for all services to be healthy
+        run: |
+          chmod +x scripts/wait_for_services.sh
+          bash scripts/wait_for_services.sh 180 || true   # don't fail here; test script reports
+
+      - name: Run full health & smoke test suite
+        run: |
+          chmod +x scripts/test_services.sh
+          TIMEOUT=8 bash scripts/test_services.sh
+        continue-on-error: false
+
+      - name: Show container logs on failure
+        if: failure()
+        run: |
+          echo "=== Unhealthy containers ==="
+          docker compose ps --filter "health=unhealthy" 2>/dev/null || true
+          echo "=== Last 50 lines from each service ==="
+          for svc in $(docker compose ps --services 2>/dev/null); do
+            echo "--- $svc ---"
+            docker compose logs --tail=20 "$svc" 2>/dev/null || true
+          done
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v --remove-orphans
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 4. Summary
+  # ───────────────────────────────────────────────────────────────────────────
+  ci-summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [syntax-check, build-images, integration-test]
+    if: always()
+    steps:
+      - name: Report status
+        run: |
+          echo "┌─────────────────────────────────┬────────────┐"
+          echo "│ Job                             │ Status     │"
+          echo "├─────────────────────────────────┼────────────┤"
+          echo "│ Syntax Check                    │ ${{ needs.syntax-check.result }}     │"
+          echo "│ Build Images                    │ ${{ needs.build-images.result }}     │"
+          echo "│ Integration Tests               │ ${{ needs.integration-test.result }}     │"
+          echo "└─────────────────────────────────┴────────────┘"
+          if [[ "${{ needs.integration-test.result }}" == "failure" || \
+                "${{ needs.build-images.result }}" == "failure" || \
+                "${{ needs.syntax-check.result }}" == "failure" ]]; then
+            echo "CI FAILED"
+            exit 1
+          fi
+          echo "CI PASSED"

@@ -1,0 +1,202 @@
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  external_labels:
+    platform: medbot
+    environment: development
+
+# ── Alerting ──────────────────────────────────────────────────────────────────
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []  # add alertmanager:9093 if you deploy one
+
+# ── Scrape configurations ─────────────────────────────────────────────────────
+scrape_configs:
+
+  # Prometheus self-monitoring
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+  - job_name: mongodb
+    static_configs:
+      - targets: ['mongodb:27017']
+    metrics_path: /metrics
+
+  - job_name: redis
+    static_configs:
+      - targets: ['redis:6379']
+
+  # ── Core / Gateway ──────────────────────────────────────────────────────────
+  - job_name: api_gateway
+    static_configs:
+      - targets: ['api_gateway:8000']
+    metrics_path: /metrics
+
+  - job_name: auth_service
+    static_configs:
+      - targets: ['auth_service:8001']
+    metrics_path: /metrics
+
+  - job_name: session_service
+    static_configs:
+      - targets: ['session_service:8002']
+    metrics_path: /metrics
+
+  - job_name: rate_limit_service
+    static_configs:
+      - targets: ['rate_limit_service:8003']
+    metrics_path: /metrics
+
+  - job_name: request_validation_service
+    static_configs:
+      - targets: ['request_validation_service:8004']
+    metrics_path: /metrics
+
+  - job_name: agent_controller
+    static_configs:
+      - targets: ['agent_controller:8005']
+    metrics_path: /metrics
+
+  # ── Orchestration ────────────────────────────────────────────────────────────
+  - job_name: langgraph_orchestrator
+    static_configs:
+      - targets: ['langgraph_orchestrator:8010']
+    metrics_path: /metrics
+
+  - job_name: triage_agent
+    static_configs:
+      - targets: ['triage_agent:8015']
+    metrics_path: /metrics
+
+  # ── Agent Services ───────────────────────────────────────────────────────────
+  - job_name: agent_services
+    static_configs:
+      - targets:
+          - 'context_builder_service:8020'
+          - 'knowledge_agent_service:8021'
+          - 'knowledge_base_service:8022'
+          - 'vision_agent_service:8023'
+          - 'rag_agent_service:8025'
+          - 'reasoning_agent_service:8026'
+          - 'safety_guardrail_agent:8027'
+          - 'search_agent_service:8028'
+          - 'evaluation_agent:8029'
+    metrics_path: /metrics
+
+  # ── Dataset Services ─────────────────────────────────────────────────────────
+  - job_name: dataset_services
+    static_configs:
+      - targets:
+          - 'dataset_generation_agent:8030'
+          - 'dataset_labeling_model_service:8031'
+          - 'dataset_preparation_service:8032'
+    metrics_path: /metrics
+
+  # ── Storage Services ─────────────────────────────────────────────────────────
+  - job_name: storage_services
+    static_configs:
+      - targets:
+          - 'conversation_storage_service:8040'
+          - 'dataset_storage_service:8041'
+          - 'metadata_storage_service:8042'
+          - 'audit_log_service:8043'
+    metrics_path: /metrics
+
+  # ── Model Services ───────────────────────────────────────────────────────────
+  - job_name: model_services
+    static_configs:
+      - targets:
+          - 'ollama_router_service:8050'
+          - 'reasoning_model_service:8051'
+          - 'embedding_model_service:8052'
+          - 'vision_model_service:8053'
+          - 'embedding_generation_service:8054'
+          - 'vector_index_service:8055'
+          - 'vector_search_service:8056'
+          - 'classification_model_service:8057'
+          - 'response_scoring_service:8058'
+    metrics_path: /metrics
+
+  # ── Document Processing ──────────────────────────────────────────────────────
+  - job_name: document_processing
+    static_configs:
+      - targets:
+          - 'document_ingestion_service:8060'
+          - 'document_chunking_service:8061'
+          - 'document_cleaning_service:8062'
+    metrics_path: /metrics
+
+  # ── Medical Analysis ─────────────────────────────────────────────────────────
+  - job_name: medical_services
+    static_configs:
+      - targets:
+          - 'medical_entity_extraction_service:8070'
+          - 'severity_classification_service:8071'
+          - 'emergency_detection_service:8072'
+          - 'medical_source_validation_service:8073'
+          - 'pubmed_search_service:8074'
+          - 'risk_detection_service:8075'
+          - 'symptom_extraction_agent:8076'
+          - 'web_search_service:8077'
+          - 'who_guidelines_service:8078'
+    metrics_path: /metrics
+
+  # ── Doctor Services ──────────────────────────────────────────────────────────
+  - job_name: doctor_services
+    static_configs:
+      - targets:
+          - 'doctor_mapping_service:8080'
+          - 'doctor_recommendation_agent:8081'
+    metrics_path: /metrics
+
+  # ── Config & Observability ───────────────────────────────────────────────────
+  - job_name: observability
+    static_configs:
+      - targets:
+          - 'config_service:8090'
+          - 'logging_service:8091'
+          - 'monitoring_service:8092'
+          - 'metrics_service:8093'
+    metrics_path: /metrics
+
+  # ── Quality & Validation ─────────────────────────────────────────────────────
+  - job_name: quality_services
+    static_configs:
+      - targets:
+          - 'triage_accuracy_service:8101'
+          - 'medical_consistency_service:8102'
+          - 'safety_validation_service:8103'
+          - 'hallucination_detection_agent:8104'
+    metrics_path: /metrics
+
+  # ── Training Pipeline ────────────────────────────────────────────────────────
+  - job_name: training_pipeline
+    static_configs:
+      - targets:
+          - 'fine_tuning_service:8110'
+          - 'training_pipeline_service:8111'
+    metrics_path: /metrics
+
+  # ── Model Management ─────────────────────────────────────────────────────────
+  - job_name: model_management
+    static_configs:
+      - targets:
+          - 'model_registry_service:8120'
+          - 'model_versioning_service:8121'
+    metrics_path: /metrics
+
+  # ── Health check endpoint scrape (fallback for services without /metrics) ────
+  - job_name: health_checks
+    metrics_path: /health
+    static_configs:
+      - targets:
+          - 'api_gateway:8000'
+          - 'auth_service:8001'
+          - 'triage_agent:8015'
+          - 'emergency_detection_service:8072'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
