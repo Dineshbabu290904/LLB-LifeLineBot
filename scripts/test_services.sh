@@ -44,15 +44,15 @@ check_health() {
     local status
     status=$(python3 -c "import json,sys; d=json.load(open('/tmp/medbot_health_resp.json')); print(d.get('status','?'))" 2>/dev/null || echo "?")
     printf "  ${GREEN}✔${NC}  %-45s port %-5s  [%s]\n" "$name" "$port" "$status"
-    ((PASS++))
+    ((++PASS))
   elif [[ "$http_code" == "000" ]]; then
     printf "  ${YELLOW}–${NC}  %-45s port %-5s  [unreachable]\n" "$name" "$port"
     FAILURES+=("$name:$port – unreachable / not running")
-    ((FAIL++))
+    ((++FAIL))
   else
     printf "  ${RED}✘${NC}  %-45s port %-5s  [HTTP $http_code]\n" "$name" "$port"
     FAILURES+=("$name:$port – HTTP $http_code")
-    ((FAIL++))
+    ((++FAIL))
   fi
 }
 
@@ -69,14 +69,14 @@ post_check() {
 
   if [[ "$http_code" =~ ^2 ]]; then
     printf "  ${GREEN}✔${NC}  %s\n" "$label"
-    ((PASS++))
+    ((++PASS))
   elif [[ "$http_code" == "000" ]]; then
     printf "  ${YELLOW}–${NC}  %s  [unreachable]\n" "$label"
-    ((SKIP++))
+    ((++SKIP))
   else
     printf "  ${RED}✘${NC}  %s  [HTTP $http_code]\n" "$label"
     FAILURES+=("POST $label – HTTP $http_code")
-    ((FAIL++))
+    ((++FAIL))
   fi
 }
 
@@ -102,11 +102,11 @@ for svc in "MongoDB:27017" "PostgreSQL:5432" "Redis:6379" "Ollama:11434"; do
   port="${svc##*:}"
   if nc -z -w "$TIMEOUT" localhost "$port" 2>/dev/null; then
     printf "  ${GREEN}✔${NC}  %-45s port %s  [up]\n" "$name" "$port"
-    ((PASS++))
+    ((++PASS))
   else
     printf "  ${RED}✘${NC}  %-45s port %s  [down]\n" "$name" "$port"
     FAILURES+=("$name:$port – port not open")
-    ((FAIL++))
+    ((++FAIL))
   fi
 done
 
